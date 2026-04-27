@@ -331,8 +331,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("video", help="path to input video")
     parser.add_argument("--model", default=None,
                         help="path to YuNet ONNX model (default: auto-download to cache)")
-    parser.add_argument("--fps", type=float, default=6.0,
-                        help="detection rate in Hz (default 6.0)")
+    parser.add_argument("--fps", type=float, default=18.0,
+                        help="detection rate in Hz (default 18.0)")
     parser.add_argument("--min-conf", type=float, default=0.6,
                         help="minimum detection confidence (default 0.6)")
     parser.add_argument("--verbose", action="store_true",

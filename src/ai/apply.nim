@@ -15,8 +15,8 @@ import ./[faces, types, util]
 import ../log
 
 const
-  SubSegmentSecs* = 0.30    ## Width of each animated sub-window (seconds).
-  ZoomEaseSecs* = 0.15      ## Ease-in / ease-out duration on each side.
+  SubSegmentSecs* = 0.15    ## Width of each animated sub-window (seconds).
+  ZoomEaseSecs* = 0.10      ## Ease-in / ease-out duration on each side.
   FaceSmoothSecs* = 0.50    ## Moving-average window for `smoothedCenter`.
 
 func easeInOut(t: float64): float64 =
