@@ -53,11 +53,11 @@ task test, "Run unit tests":
   exec "nim c -r tests/unit"
 
 task make, "Export the project":
-  exec "nim c -d:danger --panics:on --passC:-flto --passL:-flto --out:auto-editor src/main.nim"
+  exec "nim c -d:ssl -d:danger --panics:on --passC:-flto --passL:-flto --out:auto-editor src/main.nim"
   stripProgram()
 
 task brewmake, "Build auto-editor with deps dynamically linked.":
-  exec "nim c -d:dynamic -d:danger --panics:on --passC:-flto --passL:-flto --out:auto-editor src/main.nim"
+  exec "nim c -d:ssl -d:dynamic -d:danger --panics:on --passC:-flto --passL:-flto --out:auto-editor src/main.nim"
   stripProgram()
 
 task cleanff, "Clean build files":
