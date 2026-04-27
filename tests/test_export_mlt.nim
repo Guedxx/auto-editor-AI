@@ -56,7 +56,7 @@ test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
   let xmlStr = readFile(outFile)
 
   # Filter emission matches Kdenlive's native "Position and Zoom" shape:
-  # pixel-space rects, timecode keyframes, and the specific support
+  # pixel-space rects, frame-number keyframes, and the specific support
   # properties Kdenlive/MLT require to actually apply the affine filter.
   check xmlStr.contains("<filter")
   check xmlStr.contains("transition.rect")
@@ -69,18 +69,18 @@ test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
   check xmlStr.contains("transition.repeat_off")
   check xmlStr.contains("transition.mirror_off")
 
-  # Keyframes are anchored by timecode; rect values are 4 space-separated
+  # Keyframes are anchored by frame number; rect values are 4 space-separated
   # integers in profile pixel space. Clip is 2 s at 30 fps = last
-  # keyframe at 00:00:02.000.
+  # keyframe at frame 60.
   let rectIdx = xmlStr.find("transition.rect")
   check rectIdx >= 0
   let openIdx = xmlStr.find('>', rectIdx)
   let closeIdx = xmlStr.find('<', openIdx)
   let animVal = xmlStr[openIdx + 1 ..< closeIdx].strip()
-  check animVal.startsWith("00:00:00.000=")
+  check animVal.startsWith("0=")
   let segs = animVal.split(";")
   check segs.len == 3
-  check segs[^1].startsWith("00:00:02.000=")
+  check segs[^1].startsWith("60=")
 
   # Each rect must be "X Y W H" — four integers, space-separated.
   # Pull the rect payload from the first keyframe and count tokens.

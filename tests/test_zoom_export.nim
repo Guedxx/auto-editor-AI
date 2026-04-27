@@ -175,19 +175,19 @@ test "mltRectPixels: pixel-space rect in a 1920x1080 profile":
   # zoom=1.5, cx=0.25, cy=0.5 -> X=round(1920*(0.5-0.375))=240, W=2880.
   check mltRectPixels(1.5, 0.25, 0.5, 1920'i32, 1080'i32) == "240 -270 2880 1620"
 
-test "kdenliveRectAnimation: timecode-keyed pixel rects for Kdenlive":
+test "kdenliveRectAnimation: frame-keyed pixel rects for Kdenlive":
   let a = newZoomAnim(@[
     mkKf(0.0'f32, 1.0'f32, 0.5'f32, 0.5'f32),
     mkKf(1.0'f32, 1.2'f32, 0.4'f32, 0.4'f32),
     mkKf(2.0'f32, 1.0'f32, 0.5'f32, 0.5'f32),
   ])
   let s = kdenliveRectAnimation(a, 2.0, 30.0, 1920'i32, 1080'i32)
-  # Semicolon-separated, three keyframes, timecode anchors.
+  # Semicolon-separated, three keyframes, frame anchors.
   let parts = s.split(";")
   check parts.len == 3
-  check parts[0] == "00:00:00.000=0 0 1920 1080"
-  check parts[1] == "00:00:01.000=38 22 2304 1296"
-  check parts[2] == "00:00:02.000=0 0 1920 1080"
+  check parts[0] == "0=0 0 1920 1080"
+  check parts[1] == "30=38 22 2304 1296"
+  check parts[2] == "60=0 0 1920 1080"
 
 test "kdenliveRectAnimation: empty when every keyframe zoom <= ZoomEpsilon":
   let a = newZoomAnim(@[

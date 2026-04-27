@@ -445,10 +445,9 @@ proc kdenliveWrite*(output: string, tl: v3) =
     let fps = tb.float
 
     # Pre-compute the animated-zoom rect string (if any) for this clip's
-    # effect group. Kdenlive's "Position and Zoom" effect expects absolute
-    # pixel coordinates (profile-space) with `use_normalised=0`; using the
-    # percentage form from `mltRectAnimation` leaves the UI keyframe track
-    # visible but silently no-ops the actual MLT compositor.
+    # effect group. Kdenlive's "Position and Zoom" effect expects frame-keyed
+    # absolute pixel rects; timecode keys or percentage rects can leave the UI
+    # keyframe track visible while the affine filter renders as identity.
     var zoomAnimStr = ""
     let effectGroup = tl.effects[clip.effects]
     for effect in effectGroup:
