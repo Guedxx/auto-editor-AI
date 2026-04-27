@@ -124,9 +124,8 @@ proc mltRectAnimation*(a: Action; clipDurSecs: float64; fps: float64): string =
 # Convention 3: MLT ``rect`` pixel strings for Kdenlive's Transform filter
 # ---------------------------------------------------------------------------
 # Kdenlive's Transform effect (MLT ``qtblend``) uses an ``animatedrect`` with
-# opacity, written as "frame=X Y W H opacity" keyframes. Position and Zoom's
-# rect has ``opacity=false``, and Kdenlive skips showing timeline keyframes for
-# animated rects without opacity.
+# opacity. Kdenlive 26.04 saves qtblend animations with timecode keys anchored
+# to the source clip's in/out time, not frame-zero relative clip keys.
 
 func mltRectPixels*(zoom, cx, cy: float64; profW, profH: int32): string =
   ## Returns ``"X Y W H"`` in absolute pixel space of the given profile.
@@ -138,40 +137,87 @@ func mltRectPixels*(zoom, cx, cy: float64; profW, profH: int32): string =
   let y = int(round(profH.float64 * (0.5 - cy * zoom)))
   &"{x} {y} {w} {h}"
 
-proc kdenliveRectAnimation*(a: Action; clipDurSecs, fps: float64;
-    profW, profH: int32): string =
-  ## Builds the Kdenlive ``rect`` animation string for the ``qtblend`` /
-  ## Transform filter. Format:
-  ##   ``frame=X Y W H 1;frame=X Y W H 1;...``
-  ## Keyframes are frame-anchored to match Kdenlive's ``animatedrect`` project
-  ## syntax; rects are in absolute pixel space of the given profile. Returns ``""``
-  ## when the Action has zero keyframes or every keyframe's zoom <=
-  ## ZoomEpsilon.
+func secsToTimecode(secs: float64): string =
+  ## MLT/Kdenlive timecode "HH:MM:SS.mmm" with millisecond precision.
+  var s = max(0.0, secs)
+  let h = int(s / 3600.0)
+  s -= h.float64 * 3600.0
+  let m = int(s / 60.0)
+  s -= m.float64 * 60.0
+  let wholeSec = int(s)
+  let ms = int(round((s - wholeSec.float64) * 1000.0))
+  var msOut = ms
+  var secOut = wholeSec
+  var minOut = m
+  var hourOut = h
+  if msOut >= 1000:
+    msOut = 0
+    secOut += 1
+  if secOut >= 60:
+    secOut = 0
+    minOut += 1
+  if minOut >= 60:
+    minOut = 0
+    hourOut += 1
+  &"{hourOut:02}:{minOut:02}:{secOut:02}.{msOut:03}"
+
+proc kdenliveZoomFrames(a: Action; clipDurSecs, fps: float64;
+    baseFrame: int): seq[tuple[frame: int, index: int]] =
   let n = zoomKfCount(a)
-  if n == 0: return ""
+  if n == 0: return @[]
   var anyZoomed = false
   for i in 0 ..< n:
     if zoomKfAt(a, i).zoom > ZoomEpsilon:
       anyZoomed = true
       break
-  if not anyZoomed: return ""
+  if not anyZoomed: return @[]
 
-  var parts = newSeqOfCap[string](n)
-  let lastFrame = int(round(clipDurSecs * fps))
+  result = newSeqOfCap[tuple[frame: int, index: int]](n)
+  let lastFrame = baseFrame + int(round(clipDurSecs * fps))
   var prevFrame = low(int)
   for i in 0 ..< n:
     let kf = zoomKfAt(a, i)
-    var frame = int(round(kf.time.float64 * fps))
-    if frame < 0: frame = 0
+    var frame = baseFrame + int(round(kf.time.float64 * fps))
+    if frame < baseFrame: frame = baseFrame
     if frame > lastFrame: frame = lastFrame
     if frame <= prevFrame:
       if prevFrame >= lastFrame:
         continue
       frame = prevFrame + 1
     prevFrame = frame
+    result.add((frame, i))
+
+proc kdenliveRectAnimation*(a: Action; clipDurSecs, fps: float64;
+    profW, profH: int32; baseFrame: int = 0): string =
+  ## Builds the Kdenlive ``rect`` animation string for the ``qtblend`` /
+  ## Transform filter. Format:
+  ##   ``HH:MM:SS.mmm=X Y W H 1.000000;...``
+  ## Keyframes are source-time anchored to match Kdenlive's saved qtblend
+  ## syntax; rects are in absolute pixel space of the given profile. Returns ``""``
+  ## when the Action has zero keyframes or every keyframe's zoom <=
+  ## ZoomEpsilon.
+  let frames = kdenliveZoomFrames(a, clipDurSecs, fps, baseFrame)
+  if frames.len == 0: return ""
+
+  var parts = newSeqOfCap[string](frames.len)
+  for item in frames:
+    let kf = zoomKfAt(a, item.index)
     let rect = mltRectPixels(kf.zoom.float64, kf.x.float64, kf.y.float64,
       profW, profH)
-    parts.add(&"{frame}={rect} 1")
+    parts.add(&"{secsToTimecode(item.frame.float64 / fps)}={rect} 1.000000")
+  parts.join(";")
+
+proc kdenliveRotationAnimation*(a: Action; clipDurSecs, fps: float64;
+    baseFrame: int = 0): string =
+  ## Builds matching zero-rotation keyframes for Kdenlive's Transform effect.
+  ## Kdenlive saves animated ``rect`` and ``rotation`` parameters with the same
+  ## key times, and its keyframe model expects animated params to stay aligned.
+  let frames = kdenliveZoomFrames(a, clipDurSecs, fps, baseFrame)
+  if frames.len == 0: return ""
+
+  var parts = newSeqOfCap[string](frames.len)
+  for item in frames:
+    parts.add(&"{secsToTimecode(item.frame.float64 / fps)}=0")
   parts.join(";")
 
 # ---------------------------------------------------------------------------

@@ -56,7 +56,7 @@ test "kdenliveWrite emits keyframed Transform filter on zoomed clip":
   let xmlStr = readFile(outFile)
 
   # Filter emission matches Kdenlive's native Transform effect shape:
-  # pixel-space rects, frame-number keyframes, opacity, and the support
+  # pixel-space rects, source-timecode keyframes, opacity, and the support
   # properties Kdenlive/MLT require to show editable keyframes.
   check xmlStr.contains("<filter")
   check xmlStr.contains("name=\"rect\"")
@@ -67,18 +67,17 @@ test "kdenliveWrite emits keyframed Transform filter on zoomed clip":
   check xmlStr.contains("rotate_center")
   check xmlStr.contains("rotation")
 
-  # Keyframes are anchored by frame number; rect values are 4 space-separated
-  # integers in profile pixel space plus opacity. Clip is 2 s at 30 fps =
-  # last keyframe at frame 60.
+  # Keyframes are anchored by source timecode; rect values are 4
+  # space-separated integers in profile pixel space plus opacity.
   let rectIdx = xmlStr.find("name=\"rect\"")
   check rectIdx >= 0
   let openIdx = xmlStr.find('>', rectIdx)
   let closeIdx = xmlStr.find('<', openIdx)
   let animVal = xmlStr[openIdx + 1 ..< closeIdx].strip()
-  check animVal.startsWith("0=")
+  check animVal.startsWith("00:00:00.000=")
   let segs = animVal.split(";")
   check segs.len == 3
-  check segs[^1].startsWith("60=")
+  check segs[^1].startsWith("00:00:02.000=")
 
   # Each rect must be "X Y W H opacity" — four integers plus opacity.
   # Pull the rect payload from the first keyframe and count tokens.
@@ -89,7 +88,7 @@ test "kdenliveWrite emits keyframed Transform filter on zoomed clip":
   for tok in firstTokens[0 ..< 4]:
     # Each token is a signed integer.
     discard parseInt(tok)
-  check firstTokens[4] == "1"
+  check firstTokens[4] == "1.000000"
 
   # The middle keyframe is zoom=1.2 at normalized (0.4, 0.4) in a
   # 1920 x 1080 profile. Expected pixel rect:
@@ -99,7 +98,9 @@ test "kdenliveWrite emits keyframed Transform filter on zoomed clip":
   #   Y = round(1080 * (0.5 - 0.4 * 1.2))  = round(1080 * 0.02) = 22
   let midEq = segs[1].find('=')
   let midRect = segs[1][midEq + 1 .. ^1].strip()
-  check midRect == "38 22 2304 1296 1"
+  check midRect == "38 22 2304 1296 1.000000"
+
+  check xmlStr.contains("name=\"rotation\">00:00:00.000=0;00:00:01.000=0;00:00:02.000=0")
 
   # Output must be well-formed XML.
   discard parseXml(xmlStr)

@@ -445,16 +445,19 @@ proc kdenliveWrite*(output: string, tl: v3) =
     let fps = tb.float
 
     # Pre-compute the animated-zoom rect string (if any) for this clip's
-    # effect group. Kdenlive's Transform effect uses frame-keyed absolute pixel
-    # rects with opacity, so the imported project shows editable keyframes.
+    # effect group. Kdenlive's Transform effect stores keyframes at source
+    # timecodes (entry in/out space) with matching rect and rotation keys.
     var zoomAnimStr = ""
+    var zoomRotationStr = ""
     let effectGroup = tl.effects[clip.effects]
     for effect in effectGroup:
       if effect.kind == actZoomAnim and hasAnimatedZoom(effect):
         let anim = kdenliveRectAnimation(effect, clipDurSecs, fps,
-          tl.res[0], tl.res[1])
+          tl.res[0], tl.res[1], int(clip.offset))
         if anim.len > 0:
           zoomAnimStr = anim
+          zoomRotationStr = kdenliveRotationAnimation(effect, clipDurSecs,
+            fps, int(clip.offset))
           break
 
     for i, playlist in clipPlaylists:
@@ -532,7 +535,7 @@ proc kdenliveWrite*(output: string, tl: v3) =
 
           fProp = newElement("property")
           fProp.attrs = {"name": "rotation"}.toXmlAttributes()
-          fProp.add(newText("0"))
+          fProp.add(newText(zoomRotationStr))
           filter.add(fProp)
 
           fProp = newElement("property")
