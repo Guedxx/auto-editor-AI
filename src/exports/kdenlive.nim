@@ -443,15 +443,18 @@ proc kdenliveWrite*(output: string, tl: v3) =
 
     let clipDurSecs = clip.dur.float / tb.float
     let fps = tb.float
-    let filterOutTc = toTimecode(clipDurSecs, standard)
 
     # Pre-compute the animated-zoom rect string (if any) for this clip's
-    # effect group. One string is shared across every <entry> for this clip.
+    # effect group. Kdenlive's "Position and Zoom" effect expects absolute
+    # pixel coordinates (profile-space) with `use_normalised=0`; using the
+    # percentage form from `mltRectAnimation` leaves the UI keyframe track
+    # visible but silently no-ops the actual MLT compositor.
     var zoomAnimStr = ""
     let effectGroup = tl.effects[clip.effects]
     for effect in effectGroup:
       if effect.kind == actZoomAnim and hasAnimatedZoom(effect):
-        let anim = mltRectAnimation(effect, clipDurSecs, fps)
+        let anim = kdenliveRectAnimation(effect, clipDurSecs, fps,
+          tl.res[0], tl.res[1])
         if anim.len > 0:
           zoomAnimStr = anim
           break
@@ -492,13 +495,18 @@ proc kdenliveWrite*(output: string, tl: v3) =
         if zoomAnimStr.len > 0:
           let filter = newElement("filter")
           filter.attrs = {
-            "id": &"filter{filterCounter}",
-            "in": "00:00:00.000",
-            "out": filterOutTc
+            "id": &"filter{filterCounter}"
           }.toXmlAttributes()
           inc filterCounter
 
+          # Property order mirrors Kdenlive's own emission so the effect
+          # round-trips cleanly through the "Position and Zoom" UI.
           var fProp = newElement("property")
+          fProp.attrs = {"name": "background"}.toXmlAttributes()
+          fProp.add(newText("colour:0"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
           fProp.attrs = {"name": "mlt_service"}.toXmlAttributes()
           fProp.add(newText("affine"))
           filter.add(fProp)
@@ -518,14 +526,31 @@ proc kdenliveWrite*(output: string, tl: v3) =
           fProp.add(newText("0"))
           filter.add(fProp)
 
+          # British spelling is intentional — that is what MLT's affine
+          # filter reads. `use_normalized` (with a z) is silently ignored.
           fProp = newElement("property")
-          fProp.attrs = {"name": "transition.valign"}.toXmlAttributes()
-          fProp.add(newText("middle"))
+          fProp.attrs = {"name": "use_normalised"}.toXmlAttributes()
+          fProp.add(newText("0"))
           filter.add(fProp)
 
           fProp = newElement("property")
-          fProp.attrs = {"name": "transition.halign"}.toXmlAttributes()
-          fProp.add(newText("center"))
+          fProp.attrs = {"name": "producer.resource"}.toXmlAttributes()
+          fProp.add(newText("0x00000000"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "transition.repeat_off"}.toXmlAttributes()
+          fProp.add(newText("1"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "transition.mirror_off"}.toXmlAttributes()
+          fProp.add(newText("1"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "kdenlive:collapsed"}.toXmlAttributes()
+          fProp.add(newText("0"))
           filter.add(fProp)
 
           entry.add(filter)

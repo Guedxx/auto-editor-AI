@@ -121,6 +121,85 @@ proc mltRectAnimation*(a: Action; clipDurSecs: float64; fps: float64): string =
   parts.join("; ")
 
 # ---------------------------------------------------------------------------
+# Convention 3: MLT ``rect`` pixel strings for Kdenlive's pan_zoom filter
+# ---------------------------------------------------------------------------
+# Kdenlive's "Position and Zoom" effect binds its UI to a pixel-space rect
+# written as four space-separated integers "X Y W H", with the filter
+# property ``use_normalised`` set to "0". Using percentages here yields a
+# keyframe track that Kdenlive displays but does not apply during preview
+# or render — the actual MLT pipeline silently falls back to identity.
+
+func mltRectPixels*(zoom, cx, cy: float64; profW, profH: int32): string =
+  ## Returns ``"X Y W H"`` in absolute pixel space of the given profile.
+  ## Values can be negative when the scaled image overflows the frame
+  ## (expected for zoom > 1.0).
+  let w = int(round(profW.float64 * zoom))
+  let h = int(round(profH.float64 * zoom))
+  let x = int(round(profW.float64 * (0.5 - cx * zoom)))
+  let y = int(round(profH.float64 * (0.5 - cy * zoom)))
+  &"{x} {y} {w} {h}"
+
+func secsToTimecode(secs: float64): string =
+  ## MLT timecode "HH:MM:SS.mmm" with millisecond precision.
+  var s = max(0.0, secs)
+  let h = int(s / 3600.0)
+  s -= h.float64 * 3600.0
+  let m = int(s / 60.0)
+  s -= m.float64 * 60.0
+  let wholeSec = int(s)
+  let ms = int(round((s - wholeSec.float64) * 1000.0))
+  # Guard the rare carry from rounding (e.g. 0.9999 -> 1000 ms).
+  var msOut = ms
+  var secOut = wholeSec
+  var minOut = m
+  var hourOut = h
+  if msOut >= 1000:
+    msOut = 0
+    secOut += 1
+  if secOut >= 60:
+    secOut = 0
+    minOut += 1
+  if minOut >= 60:
+    minOut = 0
+    hourOut += 1
+  &"{hourOut:02}:{minOut:02}:{secOut:02}.{msOut:03}"
+
+proc kdenliveRectAnimation*(a: Action; clipDurSecs, fps: float64;
+    profW, profH: int32): string =
+  ## Builds the Kdenlive ``transition.rect`` animation string for the
+  ## ``affine`` / ``pan_zoom`` filter. Format:
+  ##   ``HH:MM:SS.mmm=X Y W H;HH:MM:SS.mmm=X Y W H;...``
+  ## Keyframes are time-anchored (matches Kdenlive's UI convention) and
+  ## rects are in absolute pixel space of the given profile. Returns ``""``
+  ## when the Action has zero keyframes or every keyframe's zoom <=
+  ## ZoomEpsilon.
+  let n = zoomKfCount(a)
+  if n == 0: return ""
+  var anyZoomed = false
+  for i in 0 ..< n:
+    if zoomKfAt(a, i).zoom > ZoomEpsilon:
+      anyZoomed = true
+      break
+  if not anyZoomed: return ""
+
+  var parts = newSeqOfCap[string](n)
+  var prevSecs = -1.0
+  for i in 0 ..< n:
+    let kf = zoomKfAt(a, i)
+    var t = kf.time.float64
+    if t < 0.0: t = 0.0
+    if t > clipDurSecs: t = clipDurSecs
+    # Monotonic anchors: bump by 1 ms if equal to previous.
+    if t <= prevSecs:
+      t = prevSecs + 0.001
+    if t > clipDurSecs: t = clipDurSecs
+    prevSecs = t
+    let rect = mltRectPixels(kf.zoom.float64, kf.x.float64, kf.y.float64,
+      profW, profH)
+    parts.add(&"{secsToTimecode(t)}={rect}")
+  parts.join(";")
+
+# ---------------------------------------------------------------------------
 # FCPXML helpers
 # ---------------------------------------------------------------------------
 

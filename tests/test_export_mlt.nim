@@ -55,24 +55,52 @@ test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
 
   let xmlStr = readFile(outFile)
 
-  # The filter lives inside an <entry> inside the clip playlist.
+  # Filter emission matches Kdenlive's native "Position and Zoom" shape:
+  # pixel-space rects, timecode keyframes, and the specific support
+  # properties Kdenlive/MLT require to actually apply the affine filter.
   check xmlStr.contains("<filter")
   check xmlStr.contains("transition.rect")
   check xmlStr.contains("mlt_service")
   check xmlStr.contains(">affine<")
   check xmlStr.contains("pan_zoom")
+  check xmlStr.contains("use_normalised")
+  check xmlStr.contains("colour:0")
+  check xmlStr.contains("0x00000000")
+  check xmlStr.contains("transition.repeat_off")
+  check xmlStr.contains("transition.mirror_off")
 
-  # Animation should start at frame 0 and end at frame 60 (2 s * 30 fps).
+  # Keyframes are anchored by timecode; rect values are 4 space-separated
+  # integers in profile pixel space. Clip is 2 s at 30 fps = last
+  # keyframe at 00:00:02.000.
   let rectIdx = xmlStr.find("transition.rect")
   check rectIdx >= 0
   let openIdx = xmlStr.find('>', rectIdx)
   let closeIdx = xmlStr.find('<', openIdx)
   let animVal = xmlStr[openIdx + 1 ..< closeIdx].strip()
-  check animVal.startsWith("0=")
-  # last segment should have frame 60 = round(2.0 * 30)
-  let segs = animVal.split("; ")
+  check animVal.startsWith("00:00:00.000=")
+  let segs = animVal.split(";")
   check segs.len == 3
-  check segs[^1].startsWith("60=")
+  check segs[^1].startsWith("00:00:02.000=")
+
+  # Each rect must be "X Y W H" — four integers, space-separated.
+  # Pull the rect payload from the first keyframe and count tokens.
+  let firstEq = segs[0].find('=')
+  let firstRect = segs[0][firstEq + 1 .. ^1]
+  let firstTokens = firstRect.splitWhitespace()
+  check firstTokens.len == 4
+  for tok in firstTokens:
+    # Each token is a signed integer.
+    discard parseInt(tok)
+
+  # The middle keyframe is zoom=1.2 at normalized (0.4, 0.4) in a
+  # 1920 x 1080 profile. Expected pixel rect:
+  #   W = round(1920 * 1.2)                = 2304
+  #   H = round(1080 * 1.2)                = 1296
+  #   X = round(1920 * (0.5 - 0.4 * 1.2))  = round(1920 * 0.02) = 38
+  #   Y = round(1080 * (0.5 - 0.4 * 1.2))  = round(1080 * 0.02) = 22
+  let midEq = segs[1].find('=')
+  let midRect = segs[1][midEq + 1 .. ^1].strip()
+  check midRect == "38 22 2304 1296"
 
   # Output must be well-formed XML.
   discard parseXml(xmlStr)
@@ -86,6 +114,9 @@ test "shotcutWriteMlt emits keyframed transition.rect filter on zoomed clip":
 
   let xmlStr = readFile(outFile)
 
+  # Shotcut is still on the percentage-based path for now (separate fix).
+  # This test asserts the current behavior so a future Shotcut refactor
+  # consciously updates the expectations.
   check xmlStr.contains("<filter")
   check xmlStr.contains("transition.rect")
   check xmlStr.contains(">affine<")

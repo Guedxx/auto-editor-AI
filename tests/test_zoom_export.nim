@@ -159,3 +159,43 @@ test "hasAnimatedZoom: empty, neutral, and real zoom cases":
     mkKf(1.0'f32, 1.15'f32, 0.5'f32, 0.5'f32),
   ])
   check hasAnimatedZoom(mixed)
+
+test "mltRectPixels: pixel-space rect in a 1920x1080 profile":
+  # Golden: zoom=1.2, cx=0.4, cy=0.4 -> "38 22 2304 1296"
+  #   W = round(1920 * 1.2) = 2304
+  #   H = round(1080 * 1.2) = 1296
+  #   X = round(1920 * (0.5 - 0.4 * 1.2)) = round(1920 * 0.02) = 38
+  #   Y = round(1080 * (0.5 - 0.4 * 1.2)) = round(1080 * 0.02) = 22
+  check mltRectPixels(1.2, 0.4, 0.4, 1920'i32, 1080'i32) == "38 22 2304 1296"
+
+  # Zoom=1.0 centered -> exact profile-fill rect.
+  check mltRectPixels(1.0, 0.5, 0.5, 1920'i32, 1080'i32) == "0 0 1920 1080"
+
+  # Zoom >1 off-center -> rect can be negative on one side.
+  # zoom=1.5, cx=0.25, cy=0.5 -> X=round(1920*(0.5-0.375))=240, W=2880.
+  check mltRectPixels(1.5, 0.25, 0.5, 1920'i32, 1080'i32) == "240 -270 2880 1620"
+
+test "kdenliveRectAnimation: timecode-keyed pixel rects for Kdenlive":
+  let a = newZoomAnim(@[
+    mkKf(0.0'f32, 1.0'f32, 0.5'f32, 0.5'f32),
+    mkKf(1.0'f32, 1.2'f32, 0.4'f32, 0.4'f32),
+    mkKf(2.0'f32, 1.0'f32, 0.5'f32, 0.5'f32),
+  ])
+  let s = kdenliveRectAnimation(a, 2.0, 30.0, 1920'i32, 1080'i32)
+  # Semicolon-separated, three keyframes, timecode anchors.
+  let parts = s.split(";")
+  check parts.len == 3
+  check parts[0] == "00:00:00.000=0 0 1920 1080"
+  check parts[1] == "00:00:01.000=38 22 2304 1296"
+  check parts[2] == "00:00:02.000=0 0 1920 1080"
+
+test "kdenliveRectAnimation: empty when every keyframe zoom <= ZoomEpsilon":
+  let a = newZoomAnim(@[
+    mkKf(0.0'f32, 1.0'f32, 0.5'f32, 0.5'f32),
+    mkKf(1.0'f32, 1.0'f32, 0.5'f32, 0.5'f32),
+  ])
+  check kdenliveRectAnimation(a, 1.0, 30.0, 1920'i32, 1080'i32) == ""
+
+test "kdenliveRectAnimation: empty for zero keyframes":
+  let a = newZoomAnim(@[])
+  check kdenliveRectAnimation(a, 1.0, 30.0, 1920'i32, 1080'i32) == ""
