@@ -121,12 +121,12 @@ proc mltRectAnimation*(a: Action; clipDurSecs: float64; fps: float64): string =
   parts.join("; ")
 
 # ---------------------------------------------------------------------------
-# Convention 3: MLT ``rect`` pixel strings for Kdenlive's pan_zoom filter
+# Convention 3: MLT ``rect`` pixel strings for Kdenlive's Transform filter
 # ---------------------------------------------------------------------------
-# Kdenlive's "Position and Zoom" effect binds its UI to a pixel-space animated
-# rect written as "frame=X Y W H" keyframes. Using timecode keys or percentage
-# rects can leave a visible keyframe track that does not apply during preview
-# or render.
+# Kdenlive's Transform effect (MLT ``qtblend``) uses an ``animatedrect`` with
+# opacity, written as "frame=X Y W H opacity" keyframes. Position and Zoom's
+# rect has ``opacity=false``, and Kdenlive skips showing timeline keyframes for
+# animated rects without opacity.
 
 func mltRectPixels*(zoom, cx, cy: float64; profW, profH: int32): string =
   ## Returns ``"X Y W H"`` in absolute pixel space of the given profile.
@@ -140,9 +140,9 @@ func mltRectPixels*(zoom, cx, cy: float64; profW, profH: int32): string =
 
 proc kdenliveRectAnimation*(a: Action; clipDurSecs, fps: float64;
     profW, profH: int32): string =
-  ## Builds the Kdenlive ``transition.rect`` animation string for the
-  ## ``affine`` / ``pan_zoom`` filter. Format:
-  ##   ``frame=X Y W H;frame=X Y W H;...``
+  ## Builds the Kdenlive ``rect`` animation string for the ``qtblend`` /
+  ## Transform filter. Format:
+  ##   ``frame=X Y W H 1;frame=X Y W H 1;...``
   ## Keyframes are frame-anchored to match Kdenlive's ``animatedrect`` project
   ## syntax; rects are in absolute pixel space of the given profile. Returns ``""``
   ## when the Action has zero keyframes or every keyframe's zoom <=
@@ -171,7 +171,7 @@ proc kdenliveRectAnimation*(a: Action; clipDurSecs, fps: float64;
     prevFrame = frame
     let rect = mltRectPixels(kf.zoom.float64, kf.x.float64, kf.y.float64,
       profW, profH)
-    parts.add(&"{frame}={rect}")
+    parts.add(&"{frame}={rect} 1")
   parts.join(";")
 
 # ---------------------------------------------------------------------------

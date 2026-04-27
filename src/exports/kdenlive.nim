@@ -445,9 +445,8 @@ proc kdenliveWrite*(output: string, tl: v3) =
     let fps = tb.float
 
     # Pre-compute the animated-zoom rect string (if any) for this clip's
-    # effect group. Kdenlive's "Position and Zoom" effect expects frame-keyed
-    # absolute pixel rects; timecode keys or percentage rects can leave the UI
-    # keyframe track visible while the affine filter renders as identity.
+    # effect group. Kdenlive's Transform effect uses frame-keyed absolute pixel
+    # rects with opacity, so the imported project shows editable keyframes.
     var zoomAnimStr = ""
     let effectGroup = tl.effects[clip.effects]
     for effect in effectGroup:
@@ -498,53 +497,42 @@ proc kdenliveWrite*(output: string, tl: v3) =
           }.toXmlAttributes()
           inc filterCounter
 
-          # Property order mirrors Kdenlive's own emission so the effect
-          # round-trips cleanly through the "Position and Zoom" UI.
+          # Use Kdenlive's Transform effect instead of Position and Zoom:
+          # Transform exposes opacity on its animated rect, so Kdenlive shows
+          # real timeline keyframes for imported zoom animations.
           var fProp = newElement("property")
-          fProp.attrs = {"name": "background"}.toXmlAttributes()
-          fProp.add(newText("colour:0"))
-          filter.add(fProp)
-
-          fProp = newElement("property")
           fProp.attrs = {"name": "mlt_service"}.toXmlAttributes()
-          fProp.add(newText("affine"))
+          fProp.add(newText("qtblend"))
           filter.add(fProp)
 
           fProp = newElement("property")
           fProp.attrs = {"name": "kdenlive_id"}.toXmlAttributes()
-          fProp.add(newText("pan_zoom"))
+          fProp.add(newText("qtblend"))
           filter.add(fProp)
 
           fProp = newElement("property")
-          fProp.attrs = {"name": "transition.rect"}.toXmlAttributes()
+          fProp.attrs = {"name": "compositing"}.toXmlAttributes()
+          fProp.add(newText("0"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "distort"}.toXmlAttributes()
+          fProp.add(newText("0"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "rotate_center"}.toXmlAttributes()
+          fProp.add(newText("1"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "rect"}.toXmlAttributes()
           fProp.add(newText(zoomAnimStr))
           filter.add(fProp)
 
           fProp = newElement("property")
-          fProp.attrs = {"name": "transition.distort"}.toXmlAttributes()
+          fProp.attrs = {"name": "rotation"}.toXmlAttributes()
           fProp.add(newText("0"))
-          filter.add(fProp)
-
-          # British spelling is intentional — that is what MLT's affine
-          # filter reads. `use_normalized` (with a z) is silently ignored.
-          fProp = newElement("property")
-          fProp.attrs = {"name": "use_normalised"}.toXmlAttributes()
-          fProp.add(newText("0"))
-          filter.add(fProp)
-
-          fProp = newElement("property")
-          fProp.attrs = {"name": "producer.resource"}.toXmlAttributes()
-          fProp.add(newText("0x00000000"))
-          filter.add(fProp)
-
-          fProp = newElement("property")
-          fProp.attrs = {"name": "transition.repeat_off"}.toXmlAttributes()
-          fProp.add(newText("1"))
-          filter.add(fProp)
-
-          fProp = newElement("property")
-          fProp.attrs = {"name": "transition.mirror_off"}.toXmlAttributes()
-          fProp.add(newText("1"))
           filter.add(fProp)
 
           fProp = newElement("property")

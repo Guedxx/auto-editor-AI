@@ -70,7 +70,8 @@ scale/position per frame. Result: the crop glides continuously into the
 speaker's face instead of stepping in discrete sub-windows.
 
 The same keyframe list is emitted natively in every supported project
-export — Kdenlive / Shotcut (MLT `affine` filter with an animated `rect`
+export — Kdenlive (MLT `qtblend` Transform filter with an animated `rect`
+property), Shotcut (MLT `affine` filter with an animated `transition.rect`
 property), Premiere / older Resolve (FCP7 `Basic Motion` filter with
 keyframed `scale` and `center` parameters) and Final Cut Pro 11 /
 modern Resolve (FCPXML `<adjust-transform>` with `<keyframeAnimation>`

@@ -46,7 +46,7 @@ proc makeZoomTimeline(): v3 =
 # Tests
 # ---------------------------------------------------------------------------
 
-test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
+test "kdenliveWrite emits keyframed Transform filter on zoomed clip":
   let tl = makeZoomTimeline()
   let tempDir = createTempDir("ae-mlt-kd", "")
   defer: removeDir(tempDir)
@@ -55,24 +55,22 @@ test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
 
   let xmlStr = readFile(outFile)
 
-  # Filter emission matches Kdenlive's native "Position and Zoom" shape:
-  # pixel-space rects, frame-number keyframes, and the specific support
-  # properties Kdenlive/MLT require to actually apply the affine filter.
+  # Filter emission matches Kdenlive's native Transform effect shape:
+  # pixel-space rects, frame-number keyframes, opacity, and the support
+  # properties Kdenlive/MLT require to show editable keyframes.
   check xmlStr.contains("<filter")
-  check xmlStr.contains("transition.rect")
+  check xmlStr.contains("name=\"rect\"")
   check xmlStr.contains("mlt_service")
-  check xmlStr.contains(">affine<")
-  check xmlStr.contains("pan_zoom")
-  check xmlStr.contains("use_normalised")
-  check xmlStr.contains("colour:0")
-  check xmlStr.contains("0x00000000")
-  check xmlStr.contains("transition.repeat_off")
-  check xmlStr.contains("transition.mirror_off")
+  check xmlStr.contains(">qtblend<")
+  check xmlStr.contains("kdenlive_id")
+  check xmlStr.contains("compositing")
+  check xmlStr.contains("rotate_center")
+  check xmlStr.contains("rotation")
 
   # Keyframes are anchored by frame number; rect values are 4 space-separated
-  # integers in profile pixel space. Clip is 2 s at 30 fps = last
-  # keyframe at frame 60.
-  let rectIdx = xmlStr.find("transition.rect")
+  # integers in profile pixel space plus opacity. Clip is 2 s at 30 fps =
+  # last keyframe at frame 60.
+  let rectIdx = xmlStr.find("name=\"rect\"")
   check rectIdx >= 0
   let openIdx = xmlStr.find('>', rectIdx)
   let closeIdx = xmlStr.find('<', openIdx)
@@ -82,15 +80,16 @@ test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
   check segs.len == 3
   check segs[^1].startsWith("60=")
 
-  # Each rect must be "X Y W H" — four integers, space-separated.
+  # Each rect must be "X Y W H opacity" — four integers plus opacity.
   # Pull the rect payload from the first keyframe and count tokens.
   let firstEq = segs[0].find('=')
   let firstRect = segs[0][firstEq + 1 .. ^1]
   let firstTokens = firstRect.splitWhitespace()
-  check firstTokens.len == 4
-  for tok in firstTokens:
+  check firstTokens.len == 5
+  for tok in firstTokens[0 ..< 4]:
     # Each token is a signed integer.
     discard parseInt(tok)
+  check firstTokens[4] == "1"
 
   # The middle keyframe is zoom=1.2 at normalized (0.4, 0.4) in a
   # 1920 x 1080 profile. Expected pixel rect:
@@ -100,7 +99,7 @@ test "kdenliveWrite emits keyframed transition.rect filter on zoomed clip":
   #   Y = round(1080 * (0.5 - 0.4 * 1.2))  = round(1080 * 0.02) = 22
   let midEq = segs[1].find('=')
   let midRect = segs[1][midEq + 1 .. ^1].strip()
-  check midRect == "38 22 2304 1296"
+  check midRect == "38 22 2304 1296 1"
 
   # Output must be well-formed XML.
   discard parseXml(xmlStr)
