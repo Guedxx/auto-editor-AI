@@ -6,9 +6,28 @@ import ../ffmpeg
 import ../media
 import ../util/[color, lang]
 
-proc parseAction(val: string): Action =
+proc parseAction*(val: string): Action =
   if val == "invert":
     return Action(kind: actInvert)
+
+  if val.startsWith("zoomanim:"):
+    let payload = val[len("zoomanim:") .. ^1]
+    if payload.len == 0:
+      return newZoomAnim(@[])
+    var kfs: seq[ZoomKeyframe]
+    for kfPart in payload.split(";"):
+      let trimmed = kfPart.strip()
+      if trimmed.len == 0: continue
+      let fields = trimmed.split(",")
+      if fields.len != 4:
+        error &"zoomanim keyframe must have 4 fields: {kfPart}"
+      kfs.add ZoomKeyframe(
+        time: parseFloat(fields[0]).float32,
+        zoom: parseFloat(fields[1]).float32,
+        x: parseFloat(fields[2]).float32,
+        y: parseFloat(fields[3]).float32,
+      )
+    return newZoomAnim(kfs)
 
   let parts = val.split(":")
   if parts.len == 2 or parts.len == 4:

@@ -1,9 +1,10 @@
-import std/[os, sets, strformat, tables, xmltree]
+import std/[os, sets, strformat, tables, xmltree, xmlparser]
 from std/math import ceil
 when defined(windows):
   import std/strutils
 
 import ../[ffmpeg, log, media, timeline]
+import zoom_export
 
 #[
 Premiere Pro uses the Final Cut Pro 7 XML Interchange Format
@@ -312,6 +313,22 @@ proc fcp7WriteXml*(name, output: string, resolve: bool, tl: v3) =
         if effect.kind in [actSpeed, actVarispeed]:
           clipitem.add speedup(effect.val * 100)
           break
+
+      # Emit basic-motion <filter> for keyframed zoom (animated scale/center).
+      block zoomMotion:
+        let clipDurSecs = clip.dur.float64 / tl.tb.float64
+        let fpsF = tl.tb.float64
+        for effect in effectGroup:
+          if effect.kind == actZoomAnim and hasAnimatedZoom(effect):
+            let motionXml = fcp7BasicMotionXml(
+              effect, clipDurSecs, fpsF, tl.res[0], tl.res[1])
+            if motionXml.len > 0:
+              try:
+                let node = parseXml(motionXml)
+                clipitem.add node
+              except XmlError, ValueError:
+                discard
+            break
 
       if resolve:
         let link1 = newElement("link")

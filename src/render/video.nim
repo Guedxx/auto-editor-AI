@@ -15,6 +15,7 @@ type VideoFrame = object
   index: int
   src: ptr string
   effects: Actions
+  clipStart: int   # clip's start on the TIMELINE in frames (for clip-local time)
 
 # Keyframe index built from AVIndexEntry for efficient seeking
 type KeyframeIndex = object
@@ -254,6 +255,79 @@ proc scaleWithPad(src: ptr AVFrame, targetW, targetH: int32, bg: RGBColor): ptr 
   av_frame_free(addr scaled)
   return output
 
+proc applyZoomCrop(frame: ptr AVFrame, zoom, x, y: float, bg: string,
+    graphTb: AVRational, nullFrame: ptr AVFrame): ptr AVFrame =
+  ## Scale+crop (or scale+pad) pipeline shared by actZoom and actZoomAnim.
+  ## Returns the resulting frame (which may be the input frame unchanged if
+  ## reformat short-circuited). Frees intermediate frames, skipping nullFrame.
+  var frame = frame
+  let origW = frame.width
+  let origH = frame.height
+  let scaledW = max(cint(float(origW) * zoom), 2)
+  let scaledH = max(cint(float(origH) * zoom), 2)
+  let scaledFrame = frame.reformat(AVPixelFormat(frame.format), scaledW, scaledH)
+  if scaledFrame != frame:
+    let oldFrame = frame
+    frame = scaledFrame
+    if oldFrame != nil and oldFrame != nullFrame:
+      av_frame_free(addr oldFrame)
+  let frameFmtName = $av_get_pix_fmt_name(AVPixelFormat(frame.format))
+  let zoomBufArgs = &"video_size={scaledW}x{scaledH}:pix_fmt={frameFmtName}:time_base={graphTb}:pixel_aspect=1/1"
+  var zoomGraph = newGraph()
+  let bufferSrc = zoomGraph.add("buffer", zoomBufArgs)
+  if zoom > 1.0:
+    var cropX = (scaledW - origW) div 2
+    var cropY = (scaledH - origH) div 2
+    if x >= 0.0 and y >= 0.0:
+      cropX = cint(max(0, min((scaledW.float * x.float - origW.float / 2.0).int,
+        (scaledW - origW).int)))
+      cropY = cint(max(0, min((scaledH.float * y.float - origH.float / 2.0).int,
+        (scaledH - origH).int)))
+    cropX = cropX and not 1.cint
+    cropY = cropY and not 1.cint
+    let cropFilter = zoomGraph.add("crop", &"{origW}:{origH}:{cropX}:{cropY}")
+    let bufferSink = zoomGraph.add("buffersink")
+    zoomGraph.linkNodes(@[bufferSrc, cropFilter, bufferSink]).configure()
+  else:
+    let padFilter = zoomGraph.add("pad", &"{origW}:{origH}:-1:-1:color={bg}")
+    let bufferSink = zoomGraph.add("buffersink")
+    zoomGraph.linkNodes(@[bufferSrc, padFilter, bufferSink]).configure()
+  zoomGraph.push(frame)
+  let oldFrame2 = frame
+  frame = zoomGraph.pull()
+  if oldFrame2 != nil and oldFrame2 != nullFrame:
+    av_frame_free(addr oldFrame2)
+  zoomGraph.cleanup()
+  return frame
+
+proc sampleKeyframes(effect: Action, tSecs: float64): (float64, float64, float64) =
+  ## Returns (zoom, x, y) at tSecs. Clamps at boundaries, lerps otherwise.
+  let n = zoomKfCount(effect)
+  if n == 0: return (1.0, 0.5, 0.5)   # no-op
+  if n == 1:
+    let k = zoomKfAt(effect, 0)
+    return (k.zoom.float64, k.x.float64, k.y.float64)
+  let first = zoomKfAt(effect, 0)
+  if tSecs <= first.time.float64:
+    return (first.zoom.float64, first.x.float64, first.y.float64)
+  let last = zoomKfAt(effect, n - 1)
+  if tSecs >= last.time.float64:
+    return (last.zoom.float64, last.x.float64, last.y.float64)
+  # Binary search: find i such that kf[i].time <= tSecs < kf[i+1].time
+  var lo = 0
+  var hi = n - 1
+  while lo + 1 < hi:
+    let mid = (lo + hi) div 2
+    if zoomKfAt(effect, mid).time.float64 <= tSecs: lo = mid
+    else: hi = mid
+  let a = zoomKfAt(effect, lo)
+  let b = zoomKfAt(effect, lo + 1)
+  let span = max(b.time.float64 - a.time.float64, 1e-9)
+  let u = max(0.0, min(1.0, (tSecs - a.time.float64) / span))
+  (a.zoom.float64 + (b.zoom.float64 - a.zoom.float64) * u,
+   a.x.float64    + (b.x.float64    - a.x.float64)    * u,
+   a.y.float64    + (b.y.float64    - a.y.float64)    * u)
+
 proc makeNewVideoFrames*(output: var OutputContainer, tl: v3, args: mainArgs,
     cache: MediaCache = nil):
     (ptr AVCodecContext, ptr AVStream, iterator(): (ptr AVFrame, int64)) =
@@ -453,7 +527,7 @@ proc makeNewVideoFrames*(output: var OutputContainer, tl: v3, args: mainArgs,
                 speed *= effect.val
 
             let i = int(round(float(sourceFramePos) * speed))
-            objList.add VideoFrame(index: i, src: obj.src, effects: effectGroup)
+            objList.add VideoFrame(index: i, src: obj.src, effects: effectGroup, clipStart: obj.start)
 
       if isNonlinear:
         # When there can be valid gaps in the timeline and no objects for this frame.
@@ -547,43 +621,16 @@ proc makeNewVideoFrames*(output: var OutputContainer, tl: v3, args: mainArgs,
       if objList.len > 0 and frame != nil and frame.width > 0 and frame.height > 0:
         for effect in objList[0].effects:
           if effect.kind == actZoom and effect.val != 1.0:
-            let origW = frame.width
-            let origH = frame.height
-            let scaledW = max(cint(float(origW) * effect.val), 2)
-            let scaledH = max(cint(float(origH) * effect.val), 2)
-            let scaledFrame = frame.reformat(AVPixelFormat(frame.format), scaledW, scaledH)
-            if scaledFrame != frame:
-              let oldFrame = frame
-              frame = scaledFrame
-              if oldFrame != nil and oldFrame != nullFrame:
-                av_frame_free(addr oldFrame)
-            let frameFmtName = $av_get_pix_fmt_name(AVPixelFormat(frame.format))
-            let zoomBufArgs = &"video_size={scaledW}x{scaledH}:pix_fmt={frameFmtName}:time_base={graphTb}:pixel_aspect=1/1"
-            var zoomGraph = newGraph()
-            let bufferSrc = zoomGraph.add("buffer", zoomBufArgs)
-            if effect.val > 1.0:
-              var cropX = (scaledW - origW) div 2
-              var cropY = (scaledH - origH) div 2
-              if effect.x >= 0.0 and effect.y >= 0.0:
-                cropX = cint(max(0, min((scaledW.float * effect.x.float - origW.float / 2.0).int,
-                  (scaledW - origW).int)))
-                cropY = cint(max(0, min((scaledH.float * effect.y.float - origH.float / 2.0).int,
-                  (scaledH - origH).int)))
-              cropX = cropX and not 1.cint
-              cropY = cropY and not 1.cint
-              let cropFilter = zoomGraph.add("crop", &"{origW}:{origH}:{cropX}:{cropY}")
-              let bufferSink = zoomGraph.add("buffersink")
-              zoomGraph.linkNodes(@[bufferSrc, cropFilter, bufferSink]).configure()
-            else:
-              let padFilter = zoomGraph.add("pad", &"{origW}:{origH}:-1:-1:color={bg}")
-              let bufferSink = zoomGraph.add("buffersink")
-              zoomGraph.linkNodes(@[bufferSrc, padFilter, bufferSink]).configure()
-            zoomGraph.push(frame)
-            let oldFrame2 = frame
-            frame = zoomGraph.pull()
-            if oldFrame2 != nil and oldFrame2 != nullFrame:
-              av_frame_free(addr oldFrame2)
-            zoomGraph.cleanup()
+            frame = applyZoomCrop(frame, effect.val.float, effect.x.float,
+              effect.y.float, bg, graphTb, nullFrame)
+          elif effect.kind == actZoomAnim and zoomKfCount(effect) > 0:
+            # Defensive: tl.tb.num == 0 shouldn't happen but guard anyway.
+            let tSecs =
+              if tl.tb.num == 0: 0.0
+              else: (index - objList[0].clipStart).float64 / tl.tb.float64
+            let (zoom, zx, zy) = sampleKeyframes(effect, tSecs)
+            if zoom > 1.01:
+              frame = applyZoomCrop(frame, zoom, zx, zy, bg, graphTb, nullFrame)
           elif effect.kind == actInvert:
             let frameFmtName = $av_get_pix_fmt_name(AVPixelFormat(frame.format))
             let bufferArgs = &"video_size={frame.width}x{frame.height}:pix_fmt={frameFmtName}:time_base={graphTb}:pixel_aspect=1/1"

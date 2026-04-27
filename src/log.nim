@@ -41,7 +41,13 @@ type
       t*: float32    # -99.0 to 0.0, default -8.0
 
   ActionKind* = enum
-    actSpeed, actVarispeed, actVolume, actInvert, actZoom
+    actSpeed, actVarispeed, actVolume, actInvert, actZoom, actZoomAnim
+
+  ZoomKeyframe* = object
+    time*: float32   ## seconds from the start of the zoom segment (0 = segStart)
+    zoom*: float32   ## zoom factor (>= 1.0; 1.0 = no zoom)
+    x*: float32      ## normalized [0,1] face center x on source
+    y*: float32      ## normalized [0,1] face center y on source
 
   Action* = object
     val*: float32
@@ -51,6 +57,8 @@ type
     of actZoom:
       x*: float32
       y*: float32
+    of actZoomAnim:
+      keyframes*: pointer   ## layout: [int32 count | ZoomKeyframe array], alloc'd by newZoomAnim
 
   Actions* = distinct int # A fat pointer to a list of Action(s).
 
@@ -65,6 +73,21 @@ func `$`*(act: Action): string =
       "zoom:" & $act.val & ":" & $act.x & ":" & $act.y
     else:
       "zoom:" & $act.val
+  of actZoomAnim:
+    if act.keyframes == nil:
+      "zoomanim:"
+    else:
+      let n = int(cast[ptr int32](act.keyframes)[])
+      if n == 0:
+        "zoomanim:"
+      else:
+        let base = cast[ptr UncheckedArray[ZoomKeyframe]](
+          cast[int](act.keyframes) + sizeof(int32))
+        var parts: seq[string]
+        for i in 0 ..< n:
+          let kf = base[i]
+          parts.add($kf.time & "," & $kf.zoom & "," & $kf.x & "," & $kf.y)
+        "zoomanim:" & parts.join(";")
 
 func `==`*(a, b: Action): bool =
   if a.kind != b.kind: return false
@@ -72,6 +95,25 @@ func `==`*(a, b: Action): bool =
   of actInvert: true
   of actSpeed, actVarispeed, actVolume: a.val == b.val
   of actZoom: a.val == b.val and a.x == b.x and a.y == b.y
+  of actZoomAnim:
+    let na =
+      if a.keyframes == nil: 0
+      else: int(cast[ptr int32](a.keyframes)[])
+    let nb =
+      if b.keyframes == nil: 0
+      else: int(cast[ptr int32](b.keyframes)[])
+    if na != nb: return false
+    if na == 0: return true
+    let pa = cast[ptr UncheckedArray[ZoomKeyframe]](
+      cast[int](a.keyframes) + sizeof(int32))
+    let pb = cast[ptr UncheckedArray[ZoomKeyframe]](
+      cast[int](b.keyframes) + sizeof(int32))
+    for i in 0 ..< na:
+      if pa[i].time != pb[i].time: return false
+      if pa[i].zoom != pb[i].zoom: return false
+      if pa[i].x != pb[i].x: return false
+      if pa[i].y != pb[i].y: return false
+    true
 
 const aNil* = Actions(0)
 const aCut* = Actions(1)
@@ -114,6 +156,37 @@ proc newActions*(list: openArray[Action]): Actions =
   let base = cast[ptr UncheckedArray[Action]](cast[int](p) + sizeof(int32))
   for i, a in list: base[i] = a
   Actions(cast[int](p))
+
+proc newZoomAnim*(kfs: openArray[ZoomKeyframe]): Action =
+  ## Allocates a fat-pointer keyframe list mirroring newActions' layout.
+  ## Never freed (consistent with existing Actions semantics; CLI is one-shot).
+  let count = kfs.len
+  if count == 0:
+    return Action(kind: actZoomAnim, val: 0.0'f32, keyframes: nil)
+  let p = alloc(sizeof(int32) + count * sizeof(ZoomKeyframe))
+  cast[ptr int32](p)[] = int32(count)
+  let base = cast[ptr UncheckedArray[ZoomKeyframe]](cast[int](p) + sizeof(int32))
+  for i, kf in kfs: base[i] = kf
+  Action(kind: actZoomAnim, val: 0.0'f32, keyframes: p)
+
+func zoomKfCount*(a: Action): int =
+  ## Number of keyframes in an actZoomAnim Action (0 otherwise).
+  if a.kind != actZoomAnim or a.keyframes == nil: 0
+  else: int(cast[ptr int32](a.keyframes)[])
+
+func zoomKfAt*(a: Action, i: int): ZoomKeyframe =
+  ## Returns the i-th keyframe. Caller must ensure 0 <= i < zoomKfCount(a).
+  let base = cast[ptr UncheckedArray[ZoomKeyframe]](
+    cast[int](a.keyframes) + sizeof(int32))
+  base[i]
+
+iterator zoomKeyframes*(a: Action): ZoomKeyframe =
+  if a.kind == actZoomAnim and a.keyframes != nil:
+    let n = int(cast[ptr int32](a.keyframes)[])
+    let base = cast[ptr UncheckedArray[ZoomKeyframe]](
+      cast[int](a.keyframes) + sizeof(int32))
+    for i in 0 ..< n:
+      yield base[i]
 
 func `$`*(a: Actions): string =
   if a.isCut: return "cut"

@@ -1,6 +1,7 @@
 import std/[json, os, tables, strformat, xmltree, sysrand, strutils]
 import ../[log, timeline]
 import ../util/fun
+import zoom_export
 
 proc genUuid*(): string =
   var bytes: array[16, byte]
@@ -432,12 +433,28 @@ proc kdenliveWrite*(output: string, tl: v3) =
   var groups: seq[JsonNode] = @[]
   var groupCounter = 0
   producers = 1
+  var filterCounter = 0
 
   for clip in clips:
     var groupChildren: seq[JsonNode] = @[]
     let `in` = toTimecode((clip.offset.float / tb.float), standard)
     let `out` = toTimecode(((clip.offset + clip.dur).float / tb.float), standard)
     let path = $clip.src[]
+
+    let clipDurSecs = clip.dur.float / tb.float
+    let fps = tb.float
+    let filterOutTc = toTimecode(clipDurSecs, standard)
+
+    # Pre-compute the animated-zoom rect string (if any) for this clip's
+    # effect group. One string is shared across every <entry> for this clip.
+    var zoomAnimStr = ""
+    let effectGroup = tl.effects[clip.effects]
+    for effect in effectGroup:
+      if effect.kind == actZoomAnim and hasAnimatedZoom(effect):
+        let anim = mltRectAnimation(effect, clipDurSecs, fps)
+        if anim.len > 0:
+          zoomAnimStr = anim
+          break
 
     for i, playlist in clipPlaylists:
       if i mod 2 == 0:
@@ -448,7 +465,6 @@ proc kdenliveWrite*(output: string, tl: v3) =
         })
         var clipProd = ""
 
-        let effectGroup = tl.effects[clip.effects]
         var hasSpeed = false
         for effect in effectGroup:
           if effect.kind == actSpeed:
@@ -472,6 +488,47 @@ proc kdenliveWrite*(output: string, tl: v3) =
         entryProp.attrs = {"name": "kdenlive:id"}.toXmlAttributes()
         entryProp.add(newText(sourceIds[path]))
         entry.add(entryProp)
+
+        if zoomAnimStr.len > 0:
+          let filter = newElement("filter")
+          filter.attrs = {
+            "id": &"filter{filterCounter}",
+            "in": "00:00:00.000",
+            "out": filterOutTc
+          }.toXmlAttributes()
+          inc filterCounter
+
+          var fProp = newElement("property")
+          fProp.attrs = {"name": "mlt_service"}.toXmlAttributes()
+          fProp.add(newText("affine"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "kdenlive_id"}.toXmlAttributes()
+          fProp.add(newText("pan_zoom"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "transition.rect"}.toXmlAttributes()
+          fProp.add(newText(zoomAnimStr))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "transition.distort"}.toXmlAttributes()
+          fProp.add(newText("0"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "transition.valign"}.toXmlAttributes()
+          fProp.add(newText("middle"))
+          filter.add(fProp)
+
+          fProp = newElement("property")
+          fProp.attrs = {"name": "transition.halign"}.toXmlAttributes()
+          fProp.add(newText("center"))
+          filter.add(fProp)
+
+          entry.add(filter)
 
         playlist.add(entry)
 

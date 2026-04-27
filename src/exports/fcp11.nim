@@ -1,8 +1,9 @@
-import std/[algorithm, os, sets, tables, xmltree]
+import std/[algorithm, os, sets, tables, xmltree, xmlparser]
 import std/[strformat, strutils]
 from std/math import round
 
 import ../[ffmpeg, log, media, timeline]
+import zoom_export
 
 #[
 Export a FCPXML 11 file readable with Final Cut Pro 10.6.8 or later.
@@ -198,6 +199,30 @@ proc fcp11WriteXml*(groupName, version, output: string, resolve: bool, tl: v3) =
         timemap.add(timept2)
 
         asset.add(timemap)
+        break
+
+    # Emit <adjust-transform> for keyframed zoom (animated scale + position).
+    for effect in effectGroup:
+      if effect.kind == actZoomAnim and hasAnimatedZoom(effect):
+        let clipDurSecs = clip.dur.float64 / tl.tb.float64
+        let fpsF = tl.tb.float64
+        let scaleXml = fcpxmlScaleParamXml(effect, clipDurSecs, fpsF)
+        let posXml = fcpxmlPositionParamXml(
+          effect, clipDurSecs, fpsF, tl.res[0], tl.res[1])
+        if scaleXml.len > 0 or posXml.len > 0:
+          let adjust = newElement("adjust-transform")
+          if scaleXml.len > 0:
+            try:
+              adjust.add parseXml(scaleXml)
+            except XmlError, ValueError:
+              discard
+          if posXml.len > 0:
+            try:
+              adjust.add parseXml(posXml)
+            except XmlError, ValueError:
+              discard
+          if adjust.len > 0:
+            asset.add(adjust)
         break
 
   var clips: seq[Clip]

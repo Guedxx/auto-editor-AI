@@ -4,6 +4,7 @@ from std/math import log10
 
 import ../[log, ffmpeg, timeline]
 import ../util/[color, fun]
+import zoom_export
 
 
 #[
@@ -109,6 +110,28 @@ proc shotcutWriteMlt*(output: string, tl: v3) =
       elif effect.kind == actVolume:
         volumeVal *= effect.val
 
+    # Compute the animated-zoom rect string (if any).
+    let clipDurSecs = clip.dur.float / tb.float
+    let fps = tb.float
+    var zoomAnimStr = ""
+    for effect in effectGroup:
+      if effect.kind == actZoomAnim and hasAnimatedZoom(effect):
+        let anim = mltRectAnimation(effect, clipDurSecs, fps)
+        if anim.len > 0:
+          zoomAnimStr = anim
+          break
+
+    proc addZoomFilter(parent: XmlNode) =
+      if zoomAnimStr.len == 0: return
+      let filter = newElement("filter")
+      filter.addProp("mlt_service", "affine")
+      filter.addProp("kdenlive_id", "pan_zoom")
+      filter.addProp("transition.rect", zoomAnimStr)
+      filter.addProp("transition.distort", "0")
+      filter.addProp("transition.valign", "middle")
+      filter.addProp("transition.halign", "center")
+      parent.add(filter)
+
     let tagName = &"chain{chains}"
     inc chains
 
@@ -135,6 +158,8 @@ proc shotcutWriteMlt*(output: string, tl: v3) =
         filter.addProp("level", $volumeDb)
         producer.add(filter)
 
+      addZoomFilter(producer)
+
       mlt.add(producer)
     else:
       # Create chain without speed effects
@@ -153,6 +178,8 @@ proc shotcutWriteMlt*(output: string, tl: v3) =
         filter.addProp("mlt_service", "volume")
         filter.addProp("level", $volumeDb)
         chain.add(filter)
+
+      addZoomFilter(chain)
 
       mlt.add(chain)
 
