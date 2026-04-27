@@ -1,10 +1,11 @@
 import unittest
-import std/[os, tempfiles]
+import std/[json, math, os, tempfiles, times]
 
-import ../src/[av, conductor, ffmpeg, media, timeline, wavutil]
+import ../src/[av, conductor, ffmpeg, log, media, timeline, wavutil]
 import ../src/util/[color, fun, lang]
 import ../src/exports/[kdenlive, fcp11]
 import ../src/vendor/tinyre/tinyre
+import ../src/ai/[apply, cache, faces, planner, schema, types]
 
 test "avrational":
   let a = AVRational(num: 3, den: 4)
@@ -167,3 +168,291 @@ test "uuid":
     for j, c in uuid:
       if j notin [8, 13, 18, 23]: # Skip dashes
         check(c in "0123456789abcdef")
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: AI pipeline unit tests
+# ---------------------------------------------------------------------------
+
+const FixturesDir = currentSourcePath().parentDir / "fixtures"
+
+test "Actions: aNil, aCut identity":
+  check aNil == aNil
+  check aCut == aCut
+  check aNil != aCut
+  check aNil.isEmpty and not aCut.isEmpty
+  check aCut.isCut and not aNil.isCut
+  check aNil.len == 0 and aCut.len == 0
+
+test "Actions: value-equality with same content":
+  let a = newActions(@[Action(kind: actSpeed, val: 1.2)])
+  let b = newActions(@[Action(kind: actSpeed, val: 1.2)])
+  check a == b
+  check a.len == 1
+  check a[0].kind == actSpeed
+  check a[0].val == 1.2'f32
+
+test "Actions: zoom x,y participates in equality":
+  let a = newActions(@[Action(kind: actZoom, val: 1.2, x: 0.5, y: 0.5)])
+  let b = newActions(@[Action(kind: actZoom, val: 1.2, x: 0.5, y: 0.5)])
+  let c = newActions(@[Action(kind: actZoom, val: 1.2, x: 0.6, y: 0.5)])
+  check a == b
+  check a != c
+
+test "parseTranscript: python whisper format":
+  let raw = readFile(FixturesDir / "transcript_python.json")
+  let segs = parseTranscript(raw)
+  check segs.len == 3
+  check segs[0].start == 0.0
+  check segs[0].endTime == 1.5
+  check segs[0].text == "Hello world."
+  check segs[1].start == 1.5
+  check segs[1].endTime == 3.25
+  check segs[2].text == "Three segments."
+
+test "parseTranscript: whisper.cpp offsets format (ms -> seconds)":
+  let raw = readFile(FixturesDir / "transcript_whisper.json")
+  let segs = parseTranscript(raw)
+  check segs.len == 2
+  check segs[0].start == 0.0
+  check segs[0].endTime == 1.5
+  check segs[0].text == "Hello world."
+  check segs[1].start == 1.5
+  check segs[1].endTime == 3.25
+  check segs[1].text == "This is a test."
+
+test "parseTranscript: unknown format -> empty":
+  let segs = parseTranscript("""{"weird":[1,2,3]}""")
+  check segs.len == 0
+
+test "parseTranscript: empty string -> empty":
+  check parseTranscript("").len == 0
+  check parseTranscript("   \n\t ").len == 0
+
+test "parseTranscript: malformed JSON -> empty":
+  check parseTranscript("{not json").len == 0
+
+test "pickSpeakerTrack: hits dominate over bbox area":
+  # Track A: 10 frames in [0,5] at size 0.04 (w=0.2, h=0.2)
+  # Track B:  3 frames in [0,5] at size 0.12 (w=0.3, h=0.4)
+  var tA = FaceTrack(id: 1, hits: 10)
+  for i in 0 .. 9:
+    let t = i.float64 * 0.5  # 0.0, 0.5, ..., 4.5 — all inside [0, 5]
+    tA.frames.add FaceFrame(
+      time: t, x: 0.5'f32, y: 0.5'f32,
+      w: 0.2'f32, h: 0.2'f32, conf: 0.9'f32, trackId: 1)
+  var tB = FaceTrack(id: 2, hits: 3)
+  for i in 0 .. 2:
+    let t = 1.0 + i.float64 * 1.5
+    tB.frames.add FaceFrame(
+      time: t, x: 0.5'f32, y: 0.5'f32,
+      w: 0.3'f32, h: 0.4'f32, conf: 0.9'f32, trackId: 2)
+  let tracks = FaceTracks(videoFps: 30.0, sourceWidth: 1920,
+    sourceHeight: 1080, tracks: @[tA, tB])
+  let (picked, ok) = pickSpeakerTrack(tracks, 0.0, 5.0)
+  check ok
+  check picked.id == 1
+
+test "pickSpeakerTrack: no coverage -> (_, false)":
+  var tA = FaceTrack(id: 1, hits: 2)
+  tA.frames.add FaceFrame(time: 10.0, x: 0.5'f32, y: 0.5'f32,
+    w: 0.2'f32, h: 0.2'f32, conf: 0.9'f32, trackId: 1)
+  tA.frames.add FaceFrame(time: 11.0, x: 0.5'f32, y: 0.5'f32,
+    w: 0.2'f32, h: 0.2'f32, conf: 0.9'f32, trackId: 1)
+  let tracks = FaceTracks(tracks: @[tA])
+  let (_, ok) = pickSpeakerTrack(tracks, 0.0, 5.0)
+  check not ok
+
+test "smoothedCenter: moving average inside window":
+  # x goes linearly 0.2 -> 0.8 across t=0..1. Use times that are exactly
+  # representable in binary floating point so windowing isn't affected by
+  # the 0.1-isn't-representable wart.
+  # Samples at t = 0.0, 0.25, 0.5, 0.75, 1.0 with x = 0.2, 0.35, 0.5, 0.65, 0.8.
+  var tr = FaceTrack(id: 0, hits: 5)
+  for i in 0 .. 4:
+    let t = i.float64 * 0.25
+    let x = (0.2 + 0.6 * t).float32
+    tr.frames.add FaceFrame(time: t, x: x, y: 0.5'f32,
+      w: 0.1'f32, h: 0.1'f32, conf: 0.9'f32, trackId: 0)
+  # Window around t=0.5 with +/- 0.3 pulls in frames at t=0.25, 0.5, 0.75.
+  # Their x values are 0.35, 0.5, 0.65 => mean = 0.5.
+  let (sx, sy) = smoothedCenter(tr, 0.5, 0.3)
+  check abs(sx - 0.5'f32) < 0.01'f32
+  check abs(sy - 0.5'f32) < 1e-5'f32
+
+test "smoothedCenter: empty window -> (-1, -1)":
+  var tr = FaceTrack(id: 0, hits: 2)
+  tr.frames.add FaceFrame(time: 0.0, x: 0.5'f32, y: 0.5'f32,
+    w: 0.1'f32, h: 0.1'f32, conf: 0.9'f32, trackId: 0)
+  tr.frames.add FaceFrame(time: 1.0, x: 0.5'f32, y: 0.5'f32,
+    w: 0.1'f32, h: 0.1'f32, conf: 0.9'f32, trackId: 0)
+  let (sx, sy) = smoothedCenter(tr, 10.0, 0.5)
+  check sx == -1.0'f32
+  check sy == -1.0'f32
+
+# -- Helpers for apply tests -------------------------------------------------
+
+proc buildFlatTracks(xv, yv: float32, tStart, tStop: float64,
+                     n: int): FaceTracks =
+  var tr = FaceTrack(id: 0, hits: int32(n))
+  let step = (tStop - tStart) / max(1, n - 1).float64
+  for i in 0 ..< n:
+    let t = tStart + i.float64 * step
+    tr.frames.add FaceFrame(time: t, x: xv, y: yv,
+      w: 0.2'f32, h: 0.2'f32, conf: 0.95'f32, trackId: 0)
+  FaceTracks(videoFps: 30.0, sourceWidth: 1920, sourceHeight: 1080,
+    tracks: @[tr])
+
+proc onlyZoom(a: Actions): Action =
+  ## Return the first actZoom Action in an Actions group (raises if none).
+  for act in a:
+    if act.kind == actZoom:
+      return act
+  raise newException(ValueError, "no actZoom in group")
+
+proc hasSpeed(a: Actions): bool =
+  for act in a:
+    if act.kind == actSpeed:
+      return true
+  false
+
+test "addPlanActions: animated zoom emits eased sub-windows with face center":
+  var args = mainArgs()
+  let plan = %* {
+    "segments": [
+      {"start": 1.0, "end": 3.0, "action": "keep",
+       "speed": 1.0, "zoom": 1.2, "reason": "test"}
+    ]
+  }
+  let tracks = buildFlatTracks(0.5'f32, 0.4'f32, 0.0, 6.0, 60)
+  let faces = toFaceSamples(tracks)
+  addPlanActions(args, plan, tracks, faces,
+    chunkStart = 0.0, chunkStop = 5.0, duration = 10.0)
+
+  check args.setAction.len >= 3
+
+  # Every emitted entry should have an actZoom centered on (0.5, 0.4)
+  # (within smoothing tolerance — our track is constant so it should
+  # be exact, but allow 0.01 slack in case averaging diverges).
+  for (group, _, _) in args.setAction:
+    let z = onlyZoom(group)
+    check abs(z.x - 0.5'f32) < 0.01'f32
+    check abs(z.y - 0.4'f32) < 0.01'f32
+
+  # First and last sub-windows ease in/out, so their zoom is < 1.2.
+  # Some middle window must hit the full 1.2 plateau.
+  let first = onlyZoom(args.setAction[0][0])
+  let last = onlyZoom(args.setAction[^1][0])
+  check first.val < 1.2'f32
+  check last.val < 1.2'f32
+
+  var sawPlateau = false
+  for (group, _, _) in args.setAction:
+    let z = onlyZoom(group)
+    if abs(z.val - 1.2'f32) < 1e-4'f32:
+      sawPlateau = true
+      break
+  check sawPlateau
+
+test "addPlanActions: cut segment emits a single aCut group":
+  var args = mainArgs()
+  let plan = %* {
+    "segments": [
+      {"start": 1.0, "end": 2.0, "action": "cut",
+       "speed": 1.0, "zoom": 1.0, "reason": "silence"}
+    ]
+  }
+  let tracks = buildFlatTracks(0.5'f32, 0.5'f32, 0.0, 6.0, 60)
+  let faces = toFaceSamples(tracks)
+  addPlanActions(args, plan, tracks, faces,
+    chunkStart = 0.0, chunkStop = 5.0, duration = 10.0)
+  check args.setAction.len == 1
+  check args.setAction[0][0].isCut
+
+test "addPlanActions: keep speed=1.2 zoom=1.0 -> no sub-segmentation":
+  var args = mainArgs()
+  let plan = %* {
+    "segments": [
+      {"start": 1.0, "end": 3.0, "action": "keep",
+       "speed": 1.2, "zoom": 1.0, "reason": "tight"}
+    ]
+  }
+  let tracks = buildFlatTracks(0.5'f32, 0.5'f32, 0.0, 6.0, 60)
+  let faces = toFaceSamples(tracks)
+  addPlanActions(args, plan, tracks, faces,
+    chunkStart = 0.0, chunkStop = 5.0, duration = 10.0)
+  check args.setAction.len == 1
+  let group = args.setAction[0][0]
+  check group.hasSpeed
+  # no actZoom should be present
+  var gotZoom = false
+  for act in group:
+    if act.kind == actZoom:
+      gotZoom = true
+  check not gotZoom
+  check group.len == 1
+  check group[0].val == 1.2'f32
+
+test "addPlanActions: short zoom segment (< 2*ease) -> single constant-zoom step":
+  var args = mainArgs()
+  let plan = %* {
+    "segments": [
+      {"start": 1.0, "end": 1.1, "action": "keep",
+       "speed": 1.0, "zoom": 1.2, "reason": "emphasis"}
+    ]
+  }
+  let tracks = buildFlatTracks(0.4'f32, 0.6'f32, 0.0, 6.0, 60)
+  let faces = toFaceSamples(tracks)
+  addPlanActions(args, plan, tracks, faces,
+    chunkStart = 0.0, chunkStop = 5.0, duration = 10.0)
+  check args.setAction.len == 1
+  let z = onlyZoom(args.setAction[0][0])
+  # No easing math: full zoom preserved.
+  check abs(z.val - 1.2'f32) < 1e-5'f32
+  check abs(z.x - 0.4'f32) < 0.01'f32
+  check abs(z.y - 0.6'f32) < 0.01'f32
+
+test "planSchema: shape + clamps + required reason":
+  let s = planSchema()
+  check s.kind == JObject
+  check s.hasKey("properties")
+  let segItems = s["properties"]["segments"]["items"]
+  check segItems.hasKey("properties")
+  let props = segItems["properties"]
+  check props["speed"]["minimum"].getFloat() == 0.75
+  check props["speed"]["maximum"].getFloat() == 1.5
+  check props["zoom"]["minimum"].getFloat() == 1.0
+  check props["zoom"]["maximum"].getFloat() == 1.35
+  # `reason` must be in the required list.
+  var sawReason = false
+  for r in segItems["required"]:
+    if r.getStr() == "reason":
+      sawReason = true
+      break
+  check sawReason
+
+test "fileFingerprint: stable across repeated calls on unchanged file":
+  let tempDir = createTempDir("ae-ai-fp", "")
+  defer: removeDir(tempDir)
+  let path = tempDir / "probe.bin"
+  writeFile(path, "hello-fingerprint")
+  let fp1 = fileFingerprint(path)
+  let fp2 = fileFingerprint(path)
+  check fp1.len > 0
+  check fp1 == fp2
+
+test "fileFingerprint: changes when mtime changes":
+  let tempDir = createTempDir("ae-ai-fp2", "")
+  defer: removeDir(tempDir)
+  let path = tempDir / "probe.bin"
+  writeFile(path, "hello-fingerprint")
+  let fp1 = fileFingerprint(path)
+
+  # Bump mtime by a full second to defeat any FS second-level truncation.
+  let info = getFileInfo(path)
+  let newT = info.lastWriteTime + initDuration(seconds = 2)
+  setLastModificationTime(path, newT)
+
+  let fp2 = fileFingerprint(path)
+  check fp1 != fp2
+
