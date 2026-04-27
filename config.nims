@@ -8,10 +8,10 @@ var enableVpl = getEnv("DISABLE_VPL").len == 0 and not defined(macosx)
 
 when defined(dynamic):
   let ffmpegCflags = gorgeEx("pkg-config --cflags libavutil", "")
-  if ffmpegCflags.exitCode == 0:
+  if ffmpegCflags.exitCode == 0 and ffmpegCflags.output.strip().len > 0:
     switch("passC", ffmpegCflags.output.strip())
   let ffmpegLibs = gorgeEx("pkg-config --libs libavfilter libavformat libavcodec libswresample libswscale libavutil", "")
-  if ffmpegLibs.exitCode == 0:
+  if ffmpegLibs.exitCode == 0 and ffmpegLibs.output.strip().len > 0:
     switch("passL", ffmpegLibs.output.strip())
 else:
   when hostCPU == "wasm32":

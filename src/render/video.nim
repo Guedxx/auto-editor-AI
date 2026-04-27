@@ -562,7 +562,16 @@ proc makeNewVideoFrames*(output: var OutputContainer, tl: v3, args: mainArgs,
             var zoomGraph = newGraph()
             let bufferSrc = zoomGraph.add("buffer", zoomBufArgs)
             if effect.val > 1.0:
-              let cropFilter = zoomGraph.add("crop", &"{origW}:{origH}")
+              var cropX = (scaledW - origW) div 2
+              var cropY = (scaledH - origH) div 2
+              if effect.x >= 0.0 and effect.y >= 0.0:
+                cropX = cint(max(0, min((scaledW.float * effect.x.float - origW.float / 2.0).int,
+                  (scaledW - origW).int)))
+                cropY = cint(max(0, min((scaledH.float * effect.y.float - origH.float / 2.0).int,
+                  (scaledH - origH).int)))
+              cropX = cropX and not 1.cint
+              cropY = cropY and not 1.cint
+              let cropFilter = zoomGraph.add("crop", &"{origW}:{origH}:{cropX}:{cropY}")
               let bufferSink = zoomGraph.add("buffersink")
               zoomGraph.linkNodes(@[bufferSrc, cropFilter, bufferSink]).configure()
             else:

@@ -44,11 +44,13 @@ type
     actSpeed, actVarispeed, actVolume, actInvert, actZoom
 
   Action* = object
+    val*: float32
     case kind*: ActionKind
-    of actInvert:
+    of actInvert, actSpeed, actVarispeed, actVolume:
       discard
-    of actSpeed, actVarispeed, actVolume, actZoom:
-      val*: float32
+    of actZoom:
+      x*: float32
+      y*: float32
 
   Actions* = distinct int # A fat pointer to a list of Action(s).
 
@@ -58,13 +60,18 @@ func `$`*(act: Action): string =
   of actVarispeed: "varispeed:" & $act.val
   of actVolume: "volume:" & $act.val
   of actInvert: "invert"
-  of actZoom: "zoom:" & $act.val
+  of actZoom:
+    if act.x >= 0.0 and act.y >= 0.0:
+      "zoom:" & $act.val & ":" & $act.x & ":" & $act.y
+    else:
+      "zoom:" & $act.val
 
 func `==`*(a, b: Action): bool =
   if a.kind != b.kind: return false
   case a.kind
   of actInvert: true
-  of actSpeed, actVarispeed, actVolume, actZoom: a.val == b.val
+  of actSpeed, actVarispeed, actVolume: a.val == b.val
+  of actZoom: a.val == b.val and a.x == b.x and a.y == b.y
 
 const aNil* = Actions(0)
 const aCut* = Actions(1)
@@ -127,6 +134,15 @@ type mainArgs* = object
   `export`*: string = ""
   output*: string = ""
   setAction*: seq[(Actions, PackedInt, PackedInt)]
+  aiProvider*: string = "openai"
+  aiModel*: string = "gpt-5.4-mini"
+  aiWhisperModel*: string = ""
+  aiWhisperCommand*: string = ""
+  aiWhisperPython*: string = ""
+  aiLanguage*: string = "auto"
+  aiChunkSecs*: int = 45
+  aiFaceScript*: string = ""
+  aiPython*: string = ""
 
   # URL download Options
   ytDlpLocation*: string = "yt-dlp"

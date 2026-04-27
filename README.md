@@ -55,6 +55,64 @@ Different editing methods can be used together.
 auto-editor example.mp4 --edit "(or audio:0.03 motion:0.06)"
 ```
 
+### AI-Assisted Editing
+
+This fork adds an experimental `--ai` pass that transcribes the input with a
+local whisper.cpp ggml model, sends small timeline windows to an LLM planner,
+and applies the returned cuts, speed changes, phrase-boundary adjustments, and
+face-aware zooms through the normal auto-editor renderer.
+
+`--ai` currently supports OpenAI first and requires Python OpenCV for face
+tracking:
+
+```
+OPENAI_API_KEY=... auto-editor example.mp4 \
+  --ai \
+  --ai-whisper-model path/to/ggml-model.bin
+```
+
+You can also put the key in a local `.env` file. `.env` is ignored by Git:
+
+```
+OPENAI_API_KEY=sk-...
+```
+
+Useful options:
+- `--ai-model MODEL` sets the OpenAI model. The default is `gpt-5.4-mini`.
+- `--ai-chunk-secs SECS` controls LLM planning window size. The default is 45.
+- `--ai-language LANG` passes a fixed language to Whisper instead of `auto`.
+- `--ai-whisper-command PATH` points to `whisper-cli` when FFmpeg lacks the
+  `whisper` filter.
+- `--ai-whisper-python PATH` points to a Python executable with
+  `openai-whisper` installed. On Arch, `extra/python-openai-whisper` makes
+  system `python3` work.
+- `--ai-face-script PATH` points to a custom OpenCV helper.
+- `--ai-python PATH` points to the Python executable used for OpenCV. If unset,
+  `.venv/bin/python` is used when present, otherwise `python3`.
+
+Recommended local Python setup:
+
+```
+python -m venv .venv
+.venv/bin/pip install -r requirements-ai.txt
+```
+
+On Arch Linux, install the native development/runtime packages first:
+
+```
+sudo pacman -S --needed base-devel git nim nimble pkgconf ffmpeg python python-pip python-virtualenv
+```
+
+For the `--ai` path with a dynamic/system FFmpeg build, also install a
+whisper.cpp CLI provider if your FFmpeg does not list the `whisper` filter:
+
+```
+sudo pacman -S --needed whisper.cpp
+```
+
+If your package source names the binary differently, pass it explicitly with
+`--ai-whisper-command /path/to/whisper-cli`.
+
 You can also use `dB` unit, a volume unit familiar to video-editors (case sensitive):
 ```
 auto-editor example.mp4 --edit audio:-19dB

@@ -27,6 +27,10 @@ __pycache__/
 nimble.develop
 nimble.paths
 nimbledeps
+.nimbledeps/
+.nimcache/
+.venv/
+.env
 
 # Wasm Files
 *\.wasm

@@ -13,6 +13,8 @@ when not defined(windows) and not defined(wasmBuild):
   import std/posix_utils
 
 import ./[about, cli, conductor, edit, ffmpeg, log]
+when not defined(wasmBuild):
+  import ./ai
 import cmds/[info, desc, cache, levels, subdump, whisper]
 import util/[color, fun, term]
 
@@ -263,10 +265,20 @@ proc parseActions(val: string): Actions =
           error &"Invalid volume value in action: {trimmedPart}"
       elif trimmedPart.startsWith("zoom:"):
         try:
-          let value = parseFloat(trimmedPart[5 ..< trimmedPart.len])
+          let parts = trimmedPart.split(":")
+          if parts.len != 2 and parts.len != 4:
+            error &"Invalid zoom action: {trimmedPart}"
+          let value = parseFloat(parts[1])
           if value <= 0.0:
             error "zoom value must be greater than 0.0"
-          list.add Action(kind: actZoom, val: value)
+          if parts.len == 4:
+            let x = parseFloat(parts[2])
+            let y = parseFloat(parts[3])
+            if x < 0.0 or x > 1.0 or y < 0.0 or y > 1.0:
+              error "zoom center must be in range [0,1]"
+            list.add Action(kind: actZoom, val: value, x: x, y: y)
+          else:
+            list.add Action(kind: actZoom, val: value, x: -1.0, y: -1.0)
         except ValueError:
           error &"Invalid zoom value in action: {trimmedPart}"
       else:
@@ -361,6 +373,24 @@ judge making cuts.
       args.setAction.add parseSpeedRange(key)
     of "set-action":
       args.setAction.add parseActionAndRange(key)
+    of "ai-provider":
+      args.aiProvider = key
+    of "ai-model":
+      args.aiModel = key
+    of "ai-whisper-model":
+      args.aiWhisperModel = key
+    of "ai-whisper-command":
+      args.aiWhisperCommand = key
+    of "ai-whisper-python":
+      args.aiWhisperPython = key
+    of "ai-language":
+      args.aiLanguage = key
+    of "ai-chunk-secs":
+      args.aiChunkSecs = parseInt(key)
+    of "ai-face-script":
+      args.aiFaceScript = key
+    of "ai-python":
+      args.aiPython = key
     of "yt-dlp-location":
       args.ytDlpLocation = key
     of "download-format":
@@ -458,6 +488,13 @@ judge making cuts.
       if myInput.startsWith("-"):
         error &"Option/Input file doesn't exist: {myInput}"
       error &"Input file must have an extension: {myInput}"
+
+  when defined(wasmBuild):
+    if args.ai:
+      error "--ai is not supported in the wasm build."
+  else:
+    if args.ai:
+      applyAi(args)
 
   editMedia(args)
 

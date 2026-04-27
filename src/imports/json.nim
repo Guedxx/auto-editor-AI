@@ -11,14 +11,17 @@ proc parseAction(val: string): Action =
     return Action(kind: actInvert)
 
   let parts = val.split(":")
-  if parts.len == 2:
+  if parts.len == 2 or parts.len == 4:
     let effectType = parts[0]
     let effectVal = parseFloat(parts[1])
     case effectType
     of "speed": return Action(kind: actSpeed, val: effectVal)
     of "volume": return Action(kind: actVolume, val: effectVal)
     of "varispeed": return Action(kind: actVarispeed, val: effectVal)
-    of "zoom": return Action(kind: actZoom, val: effectVal)
+    of "zoom":
+      if parts.len == 4:
+        return Action(kind: actZoom, val: effectVal, x: parseFloat(parts[2]), y: parseFloat(parts[3]))
+      return Action(kind: actZoom, val: effectVal, x: -1.0, y: -1.0)
     else: error &"unknown action: {effectType}"
 
   error &"unknown action: {val}"
