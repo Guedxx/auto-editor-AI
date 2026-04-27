@@ -62,11 +62,21 @@ local whisper.cpp ggml model, sends small timeline windows to an LLM planner,
 and applies the returned cuts, speed changes, phrase-boundary adjustments, and
 face-aware zooms through the normal auto-editor renderer.
 
-When the planner emits a zoomed `keep` segment, the zoom center tracks the
-detected speaker: the segment is sliced into 0.3 s sub-windows, each sampling
-the face track's moving-average center, with a 0.15 s smoothstep ease-in and
-ease-out on the zoom factor so the crop glides into the face instead of
-snapping.
+When the planner emits a zoomed `keep` segment, the zoom is stored as a
+keyframed animation on that clip: the face track is sampled at ~8 Hz with
+a 0.20 s smoothstep ease-in and ease-out on the zoom factor, and the
+renderer (or any NLE that imports the exported project) interpolates the
+scale/position per frame. Result: the crop glides continuously into the
+speaker's face instead of stepping in discrete sub-windows.
+
+The same keyframe list is emitted natively in every supported project
+export — Kdenlive / Shotcut (MLT `affine` filter with an animated `rect`
+property), Premiere / older Resolve (FCP7 `Basic Motion` filter with
+keyframed `scale` and `center` parameters) and Final Cut Pro 11 /
+modern Resolve (FCPXML `<adjust-transform>` with `<keyframeAnimation>`
+on `scale` and `position`). Open the exported project in your editor of
+choice and the zoom keyframes show up as draggable handles you can
+fine-tune by hand.
 
 `--ai` currently supports OpenAI first and requires Python OpenCV for face
 tracking:
