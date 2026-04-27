@@ -303,12 +303,12 @@ proc buildFlatTracks(xv, yv: float32, tStart, tStop: float64,
   FaceTracks(videoFps: 30.0, sourceWidth: 1920, sourceHeight: 1080,
     tracks: @[tr])
 
-proc onlyZoom(a: Actions): Action =
-  ## Return the first actZoom Action in an Actions group (raises if none).
+proc onlyAnim(a: Actions): Action =
+  ## Return the first actZoomAnim Action in an Actions group (raises if none).
   for act in a:
-    if act.kind == actZoom:
+    if act.kind == actZoomAnim:
       return act
-  raise newException(ValueError, "no actZoom in group")
+  raise newException(ValueError, "no actZoomAnim in group")
 
 proc hasSpeed(a: Actions): bool =
   for act in a:
@@ -317,6 +317,8 @@ proc hasSpeed(a: Actions): bool =
   false
 
 test "addPlanActions: animated zoom emits eased sub-windows with face center":
+  # Post Phase E: a single actZoomAnim Action with a dense keyframe list,
+  # not multiple sub-windowed zoom entries.
   var args = mainArgs()
   let plan = %* {
     "segments": [
@@ -329,27 +331,26 @@ test "addPlanActions: animated zoom emits eased sub-windows with face center":
   addPlanActions(args, plan, tracks, faces,
     chunkStart = 0.0, chunkStop = 5.0, duration = 10.0)
 
-  check args.setAction.len >= 3
+  check args.setAction.len == 1
+  let (group, _, _) = args.setAction[0]
+  let anim = onlyAnim(group)
+  check anim.zoomKfCount > 3
 
-  # Every emitted entry should have an actZoom centered on (0.5, 0.4)
-  # (within smoothing tolerance — our track is constant so it should
-  # be exact, but allow 0.01 slack in case averaging diverges).
-  for (group, _, _) in args.setAction:
-    let z = onlyZoom(group)
-    check abs(z.x - 0.5'f32) < 0.01'f32
-    check abs(z.y - 0.4'f32) < 0.01'f32
+  # Keyframes centered on (0.5, 0.4) (constant face track).
+  for kf in anim.zoomKeyframes:
+    check abs(kf.x - 0.5'f32) < 0.01'f32
+    check abs(kf.y - 0.4'f32) < 0.01'f32
 
-  # First and last sub-windows ease in/out, so their zoom is < 1.2.
-  # Some middle window must hit the full 1.2 plateau.
-  let first = onlyZoom(args.setAction[0][0])
-  let last = onlyZoom(args.setAction[^1][0])
-  check first.val < 1.2'f32
-  check last.val < 1.2'f32
+  # First / last keyframe eases to 1.0, some middle keyframe hits 1.2.
+  let n = anim.zoomKfCount
+  check anim.zoomKfAt(0).zoom < 1.2'f32
+  check anim.zoomKfAt(n - 1).zoom < 1.2'f32
+  check abs(anim.zoomKfAt(0).zoom - 1.0'f32) < 1e-4'f32
+  check abs(anim.zoomKfAt(n - 1).zoom - 1.0'f32) < 1e-4'f32
 
   var sawPlateau = false
-  for (group, _, _) in args.setAction:
-    let z = onlyZoom(group)
-    if abs(z.val - 1.2'f32) < 1e-4'f32:
+  for kf in anim.zoomKeyframes:
+    if abs(kf.zoom - 1.2'f32) < 1e-4'f32:
       sawPlateau = true
       break
   check sawPlateau
@@ -394,6 +395,8 @@ test "addPlanActions: keep speed=1.2 zoom=1.0 -> no sub-segmentation":
   check group[0].val == 1.2'f32
 
 test "addPlanActions: short zoom segment (< 2*ease) -> single constant-zoom step":
+  # Post Phase E: a single-keyframe actZoomAnim at constant zoom.
+  # Ease threshold is 0.20 s, so any segDur < 0.40 s is "short".
   var args = mainArgs()
   let plan = %* {
     "segments": [
@@ -406,11 +409,14 @@ test "addPlanActions: short zoom segment (< 2*ease) -> single constant-zoom step
   addPlanActions(args, plan, tracks, faces,
     chunkStart = 0.0, chunkStop = 5.0, duration = 10.0)
   check args.setAction.len == 1
-  let z = onlyZoom(args.setAction[0][0])
-  # No easing math: full zoom preserved.
-  check abs(z.val - 1.2'f32) < 1e-5'f32
-  check abs(z.x - 0.4'f32) < 0.01'f32
-  check abs(z.y - 0.6'f32) < 0.01'f32
+  let (group, _, _) = args.setAction[0]
+  let anim = onlyAnim(group)
+  check anim.zoomKfCount == 1
+  let kf = anim.zoomKfAt(0)
+  check abs(kf.time - 0.0'f32) < 1e-5'f32
+  check abs(kf.zoom - 1.2'f32) < 1e-5'f32
+  check abs(kf.x - 0.4'f32) < 0.01'f32
+  check abs(kf.y - 0.6'f32) < 0.01'f32
 
 test "planSchema: shape + clamps + required reason":
   let s = planSchema()
@@ -455,4 +461,10 @@ test "fileFingerprint: changes when mtime changes":
 
   let fp2 = fileFingerprint(path)
   check fp1 != fp2
+
+import ./test_zoom_anim
+import ./test_zoom_export
+import ./test_apply_keyframes
+import ./test_export_mlt
+import ./test_export_apple
 
