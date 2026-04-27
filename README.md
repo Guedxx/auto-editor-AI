@@ -62,6 +62,12 @@ local whisper.cpp ggml model, sends small timeline windows to an LLM planner,
 and applies the returned cuts, speed changes, phrase-boundary adjustments, and
 face-aware zooms through the normal auto-editor renderer.
 
+When the planner emits a zoomed `keep` segment, the zoom center tracks the
+detected speaker: the segment is sliced into 0.3 s sub-windows, each sampling
+the face track's moving-average center, with a 0.15 s smoothstep ease-in and
+ease-out on the zoom factor so the crop glides into the face instead of
+snapping.
+
 `--ai` currently supports OpenAI first and requires Python OpenCV for face
 tracking:
 
@@ -89,6 +95,49 @@ Useful options:
 - `--ai-face-script PATH` points to a custom OpenCV helper.
 - `--ai-python PATH` points to the Python executable used for OpenCV. If unset,
   `.venv/bin/python` is used when present, otherwise `python3`.
+- `--ai-no-cache` disables the artifact cache (see below) for a single run;
+  neither reads nor writes will touch disk.
+
+#### Debugging AI plans
+
+Three flags expose the AI pipeline's intermediate artifacts without having
+to wait for a full render:
+
+- `--ai-dump-plan PATH` writes the full per-chunk edit plan (including
+  every segment's action, speed, zoom and reason) to `PATH` as JSON after
+  planning finishes. Diff, grep, or hand-edit before rerunning.
+- `--ai-dry-run` plans with AI (and dumps the plan / faces if those flags
+  are also set) but skips the actual render. It prints
+  `AI dry run complete.` and exits 0. Useful for iterating on prompts and
+  chunk sizes without burning encoder time.
+- `--ai-debug-faces PATH` writes the raw face-detection JSON (the same
+  payload that lives in the cache) to `PATH`. Same schema the YuNet helper
+  emits.
+
+Example workflow — plan and inspect without rendering:
+
+```
+OPENAI_API_KEY=... auto-editor example.mp4 --ai \
+  --ai-whisper-model path/to/ggml-model.bin \
+  --ai-dry-run --ai-dump-plan plan.json --ai-debug-faces faces.json
+```
+
+Caching: every `--ai` run caches three expensive artifacts to
+`$XDG_CACHE_HOME/auto-editor-ai/` (or `~/.cache/auto-editor-ai/` if
+`XDG_CACHE_HOME` is empty; `%LOCALAPPDATA%\auto-editor-ai\` on Windows):
+the Whisper transcript, the YuNet face-detection JSON, and the per-chunk
+OpenAI edit plans. Subsequent runs on the same input reuse the cache
+automatically — rerunning `--ai` after tweaking `--ai-chunk-secs`,
+`--ai-model`, `--ai-whisper-model`, or `--ai-language` invalidates only the
+affected artifacts, so iteration stays cheap. Corrupted or unparseable
+cache entries are treated as misses and overwritten on the next successful
+run. Pass `--ai-no-cache` to force a full rebuild.
+
+Face detection uses OpenCV's YuNet DNN detector. The ONNX weights
+(~230 KB) are auto-downloaded on first run to
+`~/.cache/auto-editor-ai/models/` (or `$XDG_CACHE_HOME/auto-editor-ai/models/`
+if set). `--ai-face-script PATH` still overrides the whole helper if you
+want to supply your own detector.
 
 Recommended local Python setup:
 

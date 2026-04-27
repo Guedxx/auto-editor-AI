@@ -1,1 +1,9 @@
+# Runtime Python deps for the --ai pipeline.
+# YuNet face detector is shipped inside OpenCV (cv2.FaceDetectorYN); the
+# ONNX weights are auto-downloaded on first use to
+# ~/.cache/auto-editor-ai/models/.
 opencv-python-headless>=4.9
+numpy>=1.24
+# Used by scripts/ai_transcribe_whisper.py as the Whisper fallback when
+# FFmpeg does not ship the `whisper` filter and no whisper-cli is found.
+openai-whisper>=20231117

@@ -143,6 +143,8 @@ type mainArgs* = object
   aiChunkSecs*: int = 45
   aiFaceScript*: string = ""
   aiPython*: string = ""
+  aiDumpPlan*: string = ""
+  aiDebugFaces*: string = ""
 
   # URL download Options
   ytDlpLocation*: string = "yt-dlp"

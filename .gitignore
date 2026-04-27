@@ -8,6 +8,8 @@ ffmpeg_sources
 tests/*
 !tests/*.nim
 !tests/*.py
+!tests/fixtures/
+!tests/fixtures/*.json
 *_ALTERED*
 *https*
 *.v3

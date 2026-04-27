@@ -391,6 +391,10 @@ judge making cuts.
       args.aiFaceScript = key
     of "ai-python":
       args.aiPython = key
+    of "ai-dump-plan":
+      args.aiDumpPlan = key
+    of "ai-debug-faces":
+      args.aiDebugFaces = key
     of "yt-dlp-location":
       args.ytDlpLocation = key
     of "download-format":
