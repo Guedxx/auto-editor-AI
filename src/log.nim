@@ -257,7 +257,7 @@ let noColor* = getEnv("NO_COLOR") != "" or getEnv("AV_LOG_FORCE_NOCOLOR") != ""
 proc conwrite*(msg: string) {.raises: [].} =
   if not quiet:
     try:
-      when defined(wasmBuild):
+      when defined(emscripten):
         wasmProgressWrite(("  " & msg).cstring)
       else:
         let columns = terminalWidth()
@@ -267,7 +267,7 @@ proc conwrite*(msg: string) {.raises: [].} =
     except IOError:
       discard
 
-proc clearline* = (when not defined(wasmBuild): conwrite(""))
+proc clearline* = (when not defined(emscripten): conwrite(""))
 
 proc debug*(msg: string) =
   if isDebug:
